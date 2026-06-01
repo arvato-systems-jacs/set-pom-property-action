@@ -1,0 +1,44 @@
+name: 'Set pom.xml property values'
+description: 'Surgically updates Maven <property> values in all pom.xml files using sed. Never modifies formatting or unrelated content.'
+inputs:
+  properties:
+    description: 'JSON object mapping property name to new value. E.g. {"a28.version":"9.1.5","commerce.version":"5.1.14"}'
+    required: true
+  root_pom_path:
+    description: 'Path to root directory to search for pom.xml files'
+    required: false
+    default: '.'
+outputs:
+  changes_made:
+    description: '"true" if any pom.xml was modified'
+    value: ${{ steps.replace.outputs.changes_made }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Replace property values
+      id: replace
+      shell: bash
+      env:
+        PROPERTIES_JSON: ${{ inputs.properties }}
+        ROOT_PATH: ${{ inputs.root_pom_path }}
+      run: |
+        set -euo pipefail
+        changed=false
+
+        while IFS='=' read -r key value; do
+          [ -z "$key" ] && continue
+          echo "Setting <${key}> = ${value}"
+          while IFS= read -r pomfile; do
+            if grep -q "<${key}>" "$pomfile"; then
+              sed -i "s|<${key}>[^<]*</${key}>|<${key}>${value}</${key}>|g" "$pomfile"
+              echo "  Updated: $pomfile"
+              changed=true
+            fi
+          done < <(find "$ROOT_PATH" -name "pom.xml" -not -path "*/target/*")
+        done < <(python3 -c "
+import json, sys, os
+props = json.loads(os.environ['PROPERTIES_JSON'])
+for k, v in props.items():
+    print(f'{k}={v}')
+")
+        echo "changes_made=${changed}" >> "$GITHUB_OUTPUT"
